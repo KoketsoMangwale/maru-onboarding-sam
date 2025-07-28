@@ -1,0 +1,93 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Maru Cloud Hosting - Onboarding MVP
+
+Globals:
+  Function:
+    Runtime: python3.10
+    Timeout: 10
+
+Resources:
+
+  RegisterTenantFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/register_tenant/
+      Handler: app.lambda_handler
+      Events:
+        RegisterAPI:
+          Type: Api
+          Properties:
+            Path: /register
+            Method: get
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: events:PutEvents
+              Resource: "*"
+
+  OnboardingEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source: ["maru.register"]
+        detail-type: ["TenantRegistrationRequested"]
+      Targets:
+        - Arn: !GetAtt OnboardingStateMachine.Arn
+          Id: TriggerStepFunction
+          RoleArn: !GetAtt EventBridgeToSFRole.Arn
+
+  EventBridgeToSFRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AllowStartSF
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: states:StartExecution
+                Resource: "*"
+
+  OnboardingStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachines/onboarding.asl.json
+      Role: !GetAtt StepFunctionExecRole.Arn
+
+  StepFunctionExecRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AllowInvokeProvisionLambda
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: "*"
+
+  ProvisionTenantFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/provision_tenant/
+      Handler: app.lambda_handler
+      Policies:
+        - S3CrudPolicy:
+            BucketName: maru-content
+        - DynamoDBCrudPolicy:
+            TableName: MaruTenantRegistry
